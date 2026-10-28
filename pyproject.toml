@@ -1,0 +1,9 @@
+[project]
+name = "wechatbridge4py"
+version = "0.0.1"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "vortezwohl>=0.1.3",
+]
