@@ -19,7 +19,8 @@ def test_parses_senders_times_and_bodies_in_order() -> None:
 
 def test_preserves_multiline_body_and_attachment_lines() -> None:
     messages = parse_transcript(SAMPLE_TXT)
-    assert messages[1].text == "收到，我更新了文档：\n第二行正文保留\n[图片] 微信图片_20260920_1.jpg"
+    expected = "收到，我更新了文档：\n第二行正文保留\n[图片] 微信图片_20260920_1.jpg"
+    assert messages[1].text == expected
     assert messages[2].text == "[视频] 视频号演示.mp4"
 
 

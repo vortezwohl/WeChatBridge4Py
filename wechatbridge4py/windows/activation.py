@@ -18,7 +18,15 @@ import json
 import sys
 from typing import Sequence
 
+from winrt.windows.applicationmodel import AppInstance
+from winrt.windows.applicationmodel.activation import (
+    ActivationKind,
+    ShareTargetActivatedEventArgs,
+)
+from winrt.windows.applicationmodel.datatransfer import StandardDataFormats
+
 from wechatbridge4py.core.inbox import InboxError, InboxPaths, InboxWriter, SourceFile
+from wechatbridge4py.windows.events import signal
 
 _APPMODEL_ERROR_NO_PACKAGE = 15700
 
@@ -47,13 +55,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 async def _relay_share(paths: InboxPaths) -> None:
     """消费一次 Share Target 激活：提取 StorageItems → 落盘 → 报告。"""
-    from winrt.windows.applicationmodel import AppInstance
-    from winrt.windows.applicationmodel.activation import (
-        ActivationKind,
-        ShareTargetActivatedEventArgs,
-    )
-    from winrt.windows.applicationmodel.datatransfer import StandardDataFormats
-
     try:
         activated = AppInstance.get_activated_event_args()
     except Exception as error:
@@ -101,8 +102,6 @@ async def _relay_share(paths: InboxPaths) -> None:
         paths.log(f"[trace] share.staged batch={staged.batch_id}")
         ready_dir = writer.commit(staged)
         paths.log(f"[trace] share.committed batch={staged.batch_id} dir={ready_dir}")
-
-        from wechatbridge4py.windows.events import signal
 
         signal()
         operation.report_completed()

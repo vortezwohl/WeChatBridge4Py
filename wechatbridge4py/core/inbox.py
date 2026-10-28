@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -137,8 +138,6 @@ class InboxPaths:
         以整棵目录树内最新的 mtime 计龄（大文件拷贝期间只有正在写的文件
         在更新时间戳，按目录时间计龄会误杀进行中的分享），默认 30 分钟。
         """
-        import time
-
         if not self.staging.exists():
             return 0
         removed = 0

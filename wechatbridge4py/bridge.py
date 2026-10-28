@@ -33,6 +33,12 @@ from wechatbridge4py.core.inbox import (
 )
 from wechatbridge4py.core.models import ShareBatch, SharedItem, Transcript
 from wechatbridge4py.identity import AppIdentity
+from wechatbridge4py.windows.diagnostics import run_doctor
+from wechatbridge4py.windows.events import InboxEventWaiter, signal
+from wechatbridge4py.windows.registration import (
+    register as register_share_entry,
+    unregister as unregister_share_entry,
+)
 
 ShareHandler = Callable[[ShareBatch], object]
 
@@ -147,17 +153,15 @@ class Bridge:
             )
         if sys.platform != "win32":
             raise RuntimeError("register 仅支持 Windows。")
-        from wechatbridge4py.windows.registration import register
-
-        return register(self.app, allow_dev_mode_elevation=allow_dev_mode_elevation)
+        return register_share_entry(
+            self.app, allow_dev_mode_elevation=allow_dev_mode_elevation
+        )
 
     def unregister(self) -> bool:
         """注销分享入口（未注册时返回 False）。"""
         if sys.platform != "win32":
             raise RuntimeError("unregister 仅支持 Windows。")
-        from wechatbridge4py.windows.registration import unregister
-
-        return unregister()
+        return unregister_share_entry()
 
     def doctor(self):
         """环境体检。
@@ -166,8 +170,6 @@ class Bridge:
             DoctorReport：结构化结果，``report.ok`` 判定整体可用，
             ``report.print()`` 输出人类可读文本。
         """
-        from wechatbridge4py.windows.diagnostics import run_doctor
-
         return run_doctor()
 
     def inject(self, *zip_paths: str | os.PathLike[str]) -> str:
@@ -196,13 +198,7 @@ class Bridge:
         writer = InboxWriter(self.paths)
         staged = writer.stage(sources)
         writer.commit(staged)
-        if sys.platform == "win32":
-            try:
-                from wechatbridge4py.windows.events import signal
-
-                signal()
-            except Exception:
-                pass  # 信号只是加速器：drain 的补扫兜底
+        signal()  # 非 win32 平台静默失败；drain 的补扫兜底
         self.paths.log(f"[trace] injected batch={staged.batch_id}")
         return staged.batch_id
 
@@ -251,14 +247,12 @@ class Bridge:
     @staticmethod
     def _open_waiter():
         """Windows 上打开命名事件等待器；其他平台/失败时返回 None 走轮询。"""
-        if sys.platform == "win32":
-            try:
-                from wechatbridge4py.windows.events import InboxEventWaiter
-
-                return InboxEventWaiter()
-            except Exception:
-                return None
-        return None
+        if sys.platform != "win32":
+            return None
+        try:
+            return InboxEventWaiter()
+        except OSError:
+            return None
 
 
 def _move_dir(source: Path, target_dir: Path) -> Path | None:
@@ -278,7 +272,9 @@ def _move_dir(source: Path, target_dir: Path) -> Path | None:
 def _relocate(batch: ShareBatch, new_dir: Path) -> None:
     """批次目录移动后，把 items 的绝对路径重定位到新目录（回调返回后仍可读文件）。"""
     batch._batch_dir = new_dir
-    batch.items = tuple(replace(item, path=str(new_dir / item.relative_path)) for item in batch.items)
+    batch.items = tuple(
+        replace(item, path=str(new_dir / item.relative_path)) for item in batch.items
+    )
 
 
 def _parse_items(items: tuple[SharedItem, ...]) -> tuple[list[Transcript], list[str]]:

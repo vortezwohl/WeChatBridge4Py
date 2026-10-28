@@ -10,6 +10,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 
+from wechatbridge4py.core.inbox import InboxPaths
 from wechatbridge4py.windows.registration import (
     RegistrationError,
     dev_mode_enabled,
@@ -63,8 +64,8 @@ class DoctorReport:
                 lines.append(f"      {check.hint}")
         return "\n".join(lines)
 
-    def print(self) -> None:  # noqa: A003 - 与 str.print 语义冲突可接受
-        """打印报告（便捷方法）。"""
+    def print(self) -> None:
+        """打印报告（便捷方法；有意遮蔽内建 print，仅限本对象作用域）。"""
         print(self.format())
 
 
@@ -132,16 +133,21 @@ def run_doctor() -> DoctorReport:
         ))
 
     if dev_mode_enabled():
-        checks.append(Check(name="dev_mode", status=_OK, message="开发者模式已开启（直注兜底路线的前提）。"))
+        checks.append(Check(
+            name="dev_mode",
+            status=_OK,
+            message="开发者模式已开启（直注兜底路线的前提）。",
+        ))
     else:
         checks.append(Check(
             name="dev_mode",
             status=_WARN,
             message="开发者模式未开启。",
-            hint="register 在需要兜底路线时会请求提权自动开启（allow_dev_mode_elevation=False 可禁用）。",
+            hint=(
+                "register 在需要兜底路线时会请求提权自动开启"
+                "（allow_dev_mode_elevation=False 可禁用）。"
+            ),
         ))
-
-    from wechatbridge4py.core.inbox import InboxPaths
 
     paths = InboxPaths()
     try:

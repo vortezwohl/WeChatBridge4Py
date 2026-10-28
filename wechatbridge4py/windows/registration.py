@@ -36,6 +36,18 @@ from pathlib import Path
 from wechatbridge4py.core.imaging import ImageError, decode_png, encode_png, scale_contain
 from wechatbridge4py.identity import AppIdentity
 
+# 头部守卫导入（PEP 8 认可的顶部形态）：保证 facade 在非 Windows 平台
+# 也可导入，功能调用时再各自降级。
+try:
+    import winreg
+except ImportError:  # 非 Windows 平台
+    winreg = None  # type: ignore[assignment]
+
+try:
+    from winrt.windows.management.deployment import PackageManager
+except ImportError:  # winrt 投影仅随 win32 平台标记安装
+    PackageManager = None  # type: ignore[assignment]
+
 PACKAGE_NAME = "WeChatBridge4Py.ShareTarget"
 PUBLISHER = "CN=WeChatBridge4Py"
 # 签名路线：manifest 的 Publisher 必须与签名证书主题逐字一致，否则身份校验失败。
@@ -143,7 +155,11 @@ def build_manifest(
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap uap10 rescap">
-  <Identity Name="{PACKAGE_NAME}" Publisher="{publisher}" Version="{version}" ProcessorArchitecture="neutral" />
+  <Identity
+    Name="{PACKAGE_NAME}"
+    Publisher="{publisher}"
+    Version="{version}"
+    ProcessorArchitecture="neutral" />
   <Properties>
     <DisplayName>{display_name}</DisplayName>
     <PublisherDisplayName>WeChatBridge4Py</PublisherDisplayName>
@@ -154,7 +170,10 @@ def build_manifest(
     <Resource Language="en-us" />
   </Resources>
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.19041.0"
+      MaxVersionTested="10.0.26100.0" />
   </Dependencies>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
@@ -165,8 +184,18 @@ def build_manifest(
     微信宿主会隐藏带这些子串的分享目标（上游项目实测结论）。
   -->
   <Applications>
-    <Application Id="{APP_ID}" Executable="{executable_rel}" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
-      <uap:VisualElements AppListEntry="none" DisplayName="{display_name}" Description="把聊天合并转发归档交给你的 Python 程序" BackgroundColor="transparent" Square44x44Logo="{logo44}" Square150x150Logo="{logo150}" />
+    <Application
+      Id="{APP_ID}"
+      Executable="{executable_rel}"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App">
+      <uap:VisualElements
+        AppListEntry="none"
+        DisplayName="{display_name}"
+        Description="把聊天合并转发归档交给你的 Python 程序"
+        BackgroundColor="transparent"
+        Square44x44Logo="{logo44}"
+        Square150x150Logo="{logo150}" />
       <Extensions>
         <uap:Extension Category="windows.shareTarget">
           <!--
@@ -282,9 +311,13 @@ def _ensure_trust(thumbprint: str, cer_path: Path, msix_path: Path) -> None:
     # 提权导入本机 TrustedPeople/Root（幂等，重复导入无害）。
     script = layout_dir() / "trust-cert.ps1"
     script.write_text(
-        "Import-Certificate -FilePath '{cer}' -CertStoreLocation Cert:\\LocalMachine\\TrustedPeople | Out-Null\n"
-        "Import-Certificate -FilePath '{cer}' -CertStoreLocation Cert:\\LocalMachine\\Root | Out-Null\n"
-        "if ((Get-AuthenticodeSignature -FilePath '{msix}').Status -eq 'Valid') {{ exit 0 }} else {{ exit 1 }}\n".format(
+        "$c = '{cer}'\n"
+        "Import-Certificate -FilePath $c "
+        "-CertStoreLocation Cert:\\LocalMachine\\TrustedPeople | Out-Null\n"
+        "Import-Certificate -FilePath $c "
+        "-CertStoreLocation Cert:\\LocalMachine\\Root | Out-Null\n"
+        "if ((Get-AuthenticodeSignature -FilePath '{msix}').Status "
+        "-eq 'Valid') {{ exit 0 }} else {{ exit 1 }}\n".format(
             cer=str(cer_path), msix=str(msix_path)
         ),
         encoding="ascii",
@@ -496,57 +529,61 @@ def unregister() -> bool:
 # ---------------------------------------------------------------------------
 
 def installed_package() -> dict | None:
-    """查询本机已注册的分享包；返回名称/全名/版本/签名形态等，或 None。"""
+    """查询本机已注册的分享包；返回名称/全名/版本/签名形态等，或 None。
+
+    优先走 winrt PackageManager；投影不可用或调用异常时降级 PowerShell。
+    """
     if os.name != "nt":
         return None
-    try:
-        from winrt.windows.management.deployment import PackageManager
-
-        manager = PackageManager()
-        for package in manager.find_packages_for_user(""):
-            package_id = package.id
-            if package_id.name != PACKAGE_NAME:
-                continue
-            version = package_id.version
-            payload = {
-                "name": package_id.name,
-                "fullName": str(package_id.full_name),
-                "version": f"{version.major}.{version.minor}.{version.build}.{version.revision}",
-            }
-            for key, attribute in (
-                ("signatureKind", "signature_kind"),
-                ("isDevelopmentMode", "is_development_mode"),
-            ):
-                try:
-                    payload[key] = str(getattr(package, attribute))
-                except Exception:
-                    pass
-            return payload
-        return None
-    except Exception:
-        code, output = _run_powershell([
-            "Get-AppxPackage", "-Name", PACKAGE_NAME,
-            "|", "Select-Object", "-Property", "Name,FullName,Version",
-            "|", "ConvertTo-Json", "-Compress"
-        ])
-        if code != 0 or not output.strip() or output.strip() == "null":
-            return None
+    if PackageManager is not None:
         try:
-            payload = json.loads(output)
-            if isinstance(payload, list):
-                payload = payload[0] if payload else None
-            return payload if payload else None
-        except ValueError:
-            return None
+            manager = PackageManager()
+            for package in manager.find_packages_for_user(""):
+                package_id = package.id
+                if package_id.name != PACKAGE_NAME:
+                    continue
+                version = package_id.version
+                payload = {
+                    "name": package_id.name,
+                    "fullName": str(package_id.full_name),
+                    "version": (
+                        f"{version.major}.{version.minor}."
+                        f"{version.build}.{version.revision}"
+                    ),
+                }
+                for key, attribute in (
+                    ("signatureKind", "signature_kind"),
+                    ("isDevelopmentMode", "is_development_mode"),
+                ):
+                    try:
+                        payload[key] = str(getattr(package, attribute))
+                    except Exception:
+                        pass
+                return payload
+            return None  # 枚举成功但没有本包，无需 PowerShell 兜底
+        except Exception:
+            pass  # winrt 调用异常：落到 PowerShell 兜底
+    code, output = _run_powershell([
+        "Get-AppxPackage", "-Name", PACKAGE_NAME,
+        "|", "Select-Object", "-Property", "Name,FullName,Version",
+        "|", "ConvertTo-Json", "-Compress"
+    ])
+    if code != 0 or not output.strip() or output.strip() == "null":
+        return None
+    try:
+        payload = json.loads(output)
+        if isinstance(payload, list):
+            payload = payload[0] if payload else None
+        return payload if payload else None
+    except ValueError:
+        return None
 
 
 def dev_mode_enabled() -> bool:
     """开发者模式（免签名 -Register 的前提）是否开启。"""
-    if os.name != "nt":
+    if winreg is None:
         return False
     try:
-        import winreg
-
         with winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
             r"SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock",

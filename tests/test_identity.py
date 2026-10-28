@@ -10,11 +10,14 @@ from wechatbridge4py.identity import AppIdentity, AppIdentityError
 
 
 def _logo_png(width: int = 256, height: int = 256) -> bytes:
-    pixels = bytes()
+    pixels = bytearray()
     for y in range(height):
         for x in range(width):
-            pixels += bytes(((x * 255) // max(width - 1, 1), (y * 255) // max(height - 1, 1), 128, 255))
-    return encode_png(Image(width=width, height=height, pixels=pixels))
+            # 左上到右下的双通道渐变
+            red = (x * 255) // max(width - 1, 1)
+            green = (y * 255) // max(height - 1, 1)
+            pixels += bytes((red, green, 128, 255))
+    return encode_png(Image(width=width, height=height, pixels=bytes(pixels)))
 
 
 def test_valid_identity_constructs(tmp_path: Path) -> None:

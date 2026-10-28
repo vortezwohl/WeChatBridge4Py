@@ -54,7 +54,10 @@ def read_archive(zip_path: str | Path) -> Transcript:
             attachments = [info.filename for info in infos if info not in text_infos]
 
             # 首选微信的固定名；否则扫描全部 txt，取解析出消息最多的那个。
-            preferred = [info for info in text_infos if Path(info.filename).name == _TRANSCRIPT_NAME]
+            preferred = [
+                info for info in text_infos
+                if Path(info.filename).name == _TRANSCRIPT_NAME
+            ]
             ordered = preferred + [info for info in text_infos if info not in preferred]
             best_messages: list[Message] | None = None
             last_error: Exception | None = None

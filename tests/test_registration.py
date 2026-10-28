@@ -63,7 +63,8 @@ def test_manifest_declares_run_full_trust() -> None:
         "rescap": "http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
     }
     capabilities = [
-        node.get("Name") for node in ElementTree.fromstring(xml_text).findall(".//rescap:Capability", rescap)
+        node.get("Name")
+        for node in ElementTree.fromstring(xml_text).findall(".//rescap:Capability", rescap)
     ]
     assert "runFullTrust" in capabilities
 
