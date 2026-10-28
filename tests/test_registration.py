@@ -50,6 +50,24 @@ def test_manifest_declares_run_full_trust() -> None:
     assert "runFullTrust" in capabilities
 
 
+def test_signed_sparse_manifest_carries_external_content_and_publisher() -> None:
+    """签名路线清单：外部位置声明 + 发布者与证书主题逐字一致。"""
+    xml_text = build_manifest(
+        executable_rel="Scripts\\wcb4py-share.exe",
+        assets_rel="wcb4py-share\\Assets",
+        publisher="CN=WeChatBridge4Py Dev",
+        include_external_content=True,
+    )
+    root = ElementTree.fromstring(xml_text)
+    namespace = {"m": "http://schemas.microsoft.com/appx/manifest/foundation/windows10"}
+    uap10 = {"uap10": "http://schemas.microsoft.com/appx/manifest/uap/windows10/10"}
+    assert root.find(".//m:Identity", namespace).get("Publisher") == "CN=WeChatBridge4Py Dev"
+    assert root.find(".//uap10:AllowExternalContent", uap10) is not None
+    # 兜底路线（默认）则不带外部位置声明
+    fallback = build_manifest(executable_rel="wcb4py-share.exe", assets_rel="Assets")
+    assert "AllowExternalContent" not in fallback
+
+
 def test_write_png_emits_valid_png(tmp_path: Path) -> None:
     target = tmp_path / "icon.png"
     write_png(target, 44)
