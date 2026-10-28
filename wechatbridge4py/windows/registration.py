@@ -1,14 +1,15 @@
-"""稀疏包注册：生成清单/图标/资源索引，打包并签名 MSIX，注册分享入口。
+"""稀疏包注册：以开发者的应用身份生成清单/图标/资源索引，打包签名并注册。
 
 为什么需要稀疏 MSIX：未打包的普通 exe 无权声明 Share Target。稀疏包
 （AllowExternalContent + ExternalLocation）只注册包身份与扩展点，exe 留在
 venv 的 Scripts 目录原地，不进 WindowsApps。
 
-两个从上游项目继承的实测结论，缺一不可：
-1. 显示名绝不能含连续的「微信 / WeChat / Weixin」子串——微信宿主会把
-   这类分享目标从转发菜单里隐藏掉。因此本包使用「聊天转发桥」；
-2. 分享声明必须宽（SupportsAnyFileType + 多 DataFormat）：窄声明会被
-   微信在枚举阶段直接剔除，运行时再自行校验只收 zip。
+显示名与图标来自开发者的 AppIdentity（SDK 侧已做微信过滤红线校验）；
+包身份（Name/Publisher）是基础设施常量，与品牌无关——微信过滤发生在
+显示名层，包名含 WeChat 已被上游真机验证为不受影响。
+
+分享声明必须宽（SupportsAnyFileType + 多 DataFormat）：窄声明会被微信在
+枚举阶段直接剔除，运行时再自行校验只收 zip。
 
 注册路线（按优先级）：
 - 签名稀疏包（首选，上游生产同款形态）：自建代码签名证书 → makepri 生成
@@ -27,16 +28,19 @@ import glob as glob_module
 import json
 import os
 import shutil
-import struct
 import subprocess
 import sys
-import zlib
+from dataclasses import dataclass
 from pathlib import Path
+
+from wechatbridge4py.core.imaging import ImageError, decode_png, encode_png, scale_contain
+from wechatbridge4py.identity import AppIdentity
 
 PACKAGE_NAME = "WeChatBridge4Py.ShareTarget"
 PUBLISHER = "CN=WeChatBridge4Py"
 # 签名路线：manifest 的 Publisher 必须与签名证书主题逐字一致，否则身份校验失败。
 CERT_SUBJECT = "CN=WeChatBridge4Py Dev"
+# 兜底显示名：真实显示名来自开发者的 AppIdentity（红线校验在 identity.py）。
 DISPLAY_NAME = "聊天转发桥"
 PACKAGE_VERSION = "0.1.0.0"
 APP_ID = "Share.Relay"
@@ -56,6 +60,19 @@ _SDK_GLOBS = (
 
 class RegistrationError(RuntimeError):
     """注册/注销失败。消息面向开发者，可直接展示。"""
+
+
+@dataclass(frozen=True)
+class RegisterResult:
+    """一次成功注册的结果。
+
+    Attributes:
+        strategy: 使用的路线："signed-sparse"（签名稀疏包）或 "layout-copy"（直注兜底）。
+        package_full_name: 注册后的包全名（PFN）。
+    """
+
+    strategy: str
+    package_full_name: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -169,52 +186,6 @@ def build_manifest(
   </Applications>
 </Package>
 """
-
-
-def write_png(path: Path, size: int) -> None:
-    """生成极简品牌图标（纯标准库：实底 + 桥形图样），避免引入图像依赖。
-
-    Args:
-        path: 输出 png 路径（父目录自动创建）。
-        size: 正方形边长（像素）。
-    """
-    base = (24, 111, 99, 255)     # 深青底
-    accent = (255, 255, 255, 255)  # 白色桥形
-
-    def pixel(fx: float, fy: float) -> tuple[int, int, int, int]:
-        top_bar = 0.16 <= fy <= 0.26
-        bottom_bar = 0.74 <= fy <= 0.84
-        pillar = (0.34 <= fx <= 0.42 or 0.58 <= fx <= 0.66) and 0.16 <= fy <= 0.84
-        deck = 0.46 <= fy <= 0.54
-        return accent if (top_bar or bottom_bar or pillar or deck) else base
-
-    rows = b"".join(
-        b"\x00"
-        + bytes(
-            value
-            for x in range(size)
-            for value in pixel(x / size, y / size)
-        )
-        for y in range(size)
-    )
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + tag
-            + data
-            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-        )
-
-    header = struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0)
-    png = (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + chunk(b"IDAT", zlib.compress(rows, 9))
-        + chunk(b"IEND", b"")
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(png)
 
 
 # ---------------------------------------------------------------------------
@@ -352,16 +323,20 @@ def _signature_status(msix_path: Path) -> str:
 # 打包与注册
 # ---------------------------------------------------------------------------
 
-def register(*, allow_dev_mode_elevation: bool = True) -> str:
-    """注册分享入口（幂等：已注册则先注销再注册）。
+def register(
+    identity: AppIdentity,
+    *,
+    allow_dev_mode_elevation: bool = True,
+) -> RegisterResult:
+    """以开发者的应用身份注册分享入口（幂等：已注册则先注销再注册）。
 
     Args:
+        identity: 应用身份（显示名 + logo），显示名与图标写入清单与资产。
         allow_dev_mode_elevation: 进入兜底直注路线前，若开发者模式未开启，
             是否允许弹 UAC 自动开启（False 时直接给出手动指引并失败）。
 
     Returns:
-        成功路线名："signed-sparse"（签名稀疏包，首选）或
-        "layout-copy"（开发者模式直注兜底）。
+        RegisterResult：成功路线与包全名。
 
     Raises:
         RegistrationError: 两条路线都失败；错误输出包含指引。
@@ -370,22 +345,29 @@ def register(*, allow_dev_mode_elevation: bool = True) -> str:
         raise RegistrationError("register 仅支持 Windows。")
     exe = share_entry_exe()
     target = layout_dir()
-    _ensure_assets(target / "Assets")
+    _ensure_assets(target / "Assets", identity)
     if installed_package():
         unregister()
 
     tools = find_sdk_tools()
+    result: RegisterResult | None = None
     if tools["signtool"] and tools["makeappx"]:
         try:
-            return _register_signed(target, tools)
+            result = _register_signed(target, tools, identity)
         except RegistrationError as error:
             print(f"[签名路线失败，回退开发者模式直注] {error}")
-    if not ensure_dev_mode(allow_elevation=allow_dev_mode_elevation):
-        raise RegistrationError(_DEV_MODE_MANUAL)
-    return _register_layout(exe, target)
+    if result is None:
+        if not ensure_dev_mode(allow_elevation=allow_dev_mode_elevation):
+            raise RegistrationError(_DEV_MODE_MANUAL)
+        result = _register_layout(exe, target, identity)
+    return result
 
 
-def _register_signed(target: Path, tools: dict[str, Path | None]) -> str:
+def _register_signed(
+    target: Path,
+    tools: dict[str, Path | None],
+    identity: AppIdentity,
+) -> RegisterResult:
     """签名稀疏包路线：证书 → PRI → MSIX → 签名 → 信任 → -ExternalLocation 注册。"""
     print("[1/5] 准备清单与代码签名证书…")
     pack_dir = target / "pack"
@@ -397,6 +379,7 @@ def _register_signed(target: Path, tools: dict[str, Path | None]) -> str:
             assets_rel="wcb4py-share\\Assets",
             publisher=CERT_SUBJECT,
             include_external_content=True,
+            display_name=identity.name,
         ),
         encoding="utf-8",
     )
@@ -437,15 +420,22 @@ def _register_signed(target: Path, tools: dict[str, Path | None]) -> str:
     if package is None:
         raise RegistrationError(f"签名包注册失败：exit={code} {output.strip()[:400]}")
     _note_strategy("signed-sparse")
-    return "signed-sparse"
+    return RegisterResult(
+        strategy="signed-sparse",
+        package_full_name=str(package.get("fullName") or ""),
+    )
 
 
-def _register_layout(exe: Path, target: Path) -> str:
+def _register_layout(exe: Path, target: Path, identity: AppIdentity) -> RegisterResult:
     """开发者模式直注兜底路线：复制 exe 到布局目录后 -Register。"""
     shutil.copyfile(exe, target / SHARE_EXE_NAME)
     manifest_path = target / "AppxManifest.xml"
     manifest_path.write_text(
-        build_manifest(executable_rel=SHARE_EXE_NAME, assets_rel="Assets"),
+        build_manifest(
+            executable_rel=SHARE_EXE_NAME,
+            assets_rel="Assets",
+            display_name=identity.name,
+        ),
         encoding="utf-8",
     )
     code, output = _run_powershell(["Add-AppxPackage", "-Register", str(manifest_path)])
@@ -455,7 +445,10 @@ def _register_layout(exe: Path, target: Path) -> str:
             f"注册失败：exit={code} {output.strip()[:600]}" + _dev_mode_hint(output)
         )
     _note_strategy("layout-copy")
-    return "layout-copy"
+    return RegisterResult(
+        strategy="layout-copy",
+        package_full_name=str(package.get("fullName") or ""),
+    )
 
 
 def _build_resources_pri(pack_dir: Path, tools: dict[str, Path | None]) -> bool:
@@ -611,62 +604,24 @@ def ensure_dev_mode(allow_elevation: bool = True) -> bool:
     return False
 
 
-def doctor() -> list[str]:
-    """环境体检，返回逐条检查结果文本（同时直接打印交给 CLI 使用）。"""
-    if os.name != "nt":
-        return ["当前平台不是 Windows：本命令检查的内容仅对 win32 有意义。"]
-    lines: list[str] = []
-    lines.append(f"Python {sys.version.split()[0]}  prefix={sys.prefix}")
-    try:
-        exe = share_entry_exe()
-        lines.append(f"[OK] 分享入口 exe：{exe}")
-    except RegistrationError as error:
-        lines.append(f"[缺失] {error}")
-    package = installed_package()
-    if package:
-        detail = "，".join(
-            f"{key}={package[key]}" for key in package if key != "name"
-        )
-        lines.append(f"[OK] 已注册：{detail or package['fullName']}")
-    else:
-        lines.append("[未注册] 尚未注册分享入口，运行 wcb4py register。")
-    tools = find_sdk_tools()
-    missing = [name for name, path in tools.items() if path is None]
-    if missing:
-        lines.append(f"[缺失] Windows SDK 工具：{'+'.join(missing)}（将回退开发者模式直注路线）")
-    else:
-        lines.append(f"[OK] SDK 工具：signtool/makeappx/makepri（{tools['signtool'].parent}）")
-    lines.append(
-        "[OK] 开发者模式：已开启（直注兜底路线的前提）"
-        if dev_mode_enabled()
-        else "[未开启] 开发者模式未开启：register 在需要兜底路线时会请求提权自动开启"
-             "（--no-dev-mode 可禁用，届时按手动指引处理）"
-    )
-    from wechatbridge4py.core.inbox import InboxPaths
-
-    paths = InboxPaths()
-    try:
-        paths.ensure_created()
-        lines.append(f"[OK] 收件箱：{paths.root}")
-    except OSError as error:
-        lines.append(f"[异常] 收件箱不可用：{error}")
-    lines.append(
-        "验证指引：微信里多选消息 → 合并转发 → 转发到其他应用 → 选「聊天转发桥」。\n"
-        "若微信菜单里看不到入口：先用资源管理器选中 zip → 右键「共享」对照排查\n"
-        "（能看到=注册正常，是微信过滤；看不到=注册问题）；微信转发列表有缓存，\n"
-        "必要时结束微信进程后重开。"
-    )
-    return lines
-
-
 # ---------------------------------------------------------------------------
 # 内部辅助
 # ---------------------------------------------------------------------------
 
-def _ensure_assets(assets_dir: Path) -> None:
-    """写出两张清单引用的图标（幂等）。"""
-    write_png(assets_dir / _ASSET_44, 44)
-    write_png(assets_dir / _ASSET_150, 150)
+def _ensure_assets(assets_dir: Path, identity: AppIdentity) -> None:
+    """从开发者 logo 生成清单引用的两档图标（44/150，幂等覆盖）。
+
+    Raises:
+        RegistrationError: logo 无法读取或解码（构造期已校验过一次，
+            这里防御注册时文件被改动的情况）。
+    """
+    try:
+        source = decode_png(identity.logo_bytes())
+    except (OSError, ImageError) as error:
+        raise RegistrationError(f"应用 logo 无法读取：{error}") from error
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    for size, name in ((44, _ASSET_44), (150, _ASSET_150)):
+        (assets_dir / name).write_bytes(encode_png(scale_contain(source, size)))
 
 
 def _note_strategy(strategy: str) -> None:

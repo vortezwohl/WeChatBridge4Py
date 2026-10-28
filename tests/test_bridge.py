@@ -105,3 +105,34 @@ def test_broken_manifest_is_quarantined_not_stuck(inbox: InboxPaths) -> None:
     assert (junk / "error.json").exists() is False  # 已整体移走
     assert any(inbox.failed.iterdir())
     assert not any(inbox.ready.iterdir())
+
+
+def test_register_requires_app_identity(inbox: InboxPaths) -> None:
+    """纯消费模式（未提供 app）调用 register 必须立刻拒绝。"""
+    bridge = Bridge(inbox=inbox)
+    with pytest.raises(ValueError, match="应用身份"):
+        bridge.register()
+
+
+def test_inject_simulates_share_without_wechat(inbox: InboxPaths, wechat_zip) -> None:
+    """inject = 一次模拟分享：返回批次 id，drain 恰好分发一次。"""
+    bridge = Bridge(inbox=inbox)
+    got: list = []
+    bridge.on_share(got.append)
+
+    batch_id = bridge.inject(str(wechat_zip))
+    assert isinstance(batch_id, str) and len(batch_id) == 36  # UUID 形态
+    assert any(inbox.ready.iterdir())  # 尚未消费：批次还在 Ready 里
+
+    processed = bridge.drain()
+    assert [batch.batch_id for batch in processed] == [batch_id]
+    assert got and got[0].batch_id == batch_id
+    assert len(got[0].all_messages) == 3
+    assert not any(inbox.ready.iterdir())  # 消费后进入 Done
+    assert (inbox.done / batch_id).is_dir()
+
+
+def test_inject_missing_file_raises(inbox: InboxPaths, tmp_path) -> None:
+    bridge = Bridge(inbox=inbox)
+    with pytest.raises(FileNotFoundError):
+        bridge.inject(str(tmp_path / "ghost.zip"))

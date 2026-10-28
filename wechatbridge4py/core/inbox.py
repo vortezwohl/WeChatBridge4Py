@@ -70,27 +70,6 @@ class SourceFile:
 
 
 @dataclass(frozen=True)
-class SharedItem:
-    """manifest.json 里登记的一个批次文件。
-
-    Attributes:
-        id: 条目唯一标识。
-        display_name: 展示名（微信原始文件名）。
-        relative_path: 相对批次目录的 POSIX 风格路径（files/<安全文件名>）。
-        path: 消费端加载时填充的绝对路径；写入端不填。
-    """
-
-    id: str
-    display_name: str
-    relative_path: str
-    content_type: str | None
-    byte_count: int
-    item_index: int
-    attachment_index: int
-    path: str | None = None
-
-
-@dataclass(frozen=True)
 class StagedShare:
     """已完整暂存、尚未发布的批次（半提交状态）。"""
 

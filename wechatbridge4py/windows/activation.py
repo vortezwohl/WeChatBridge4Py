@@ -102,7 +102,7 @@ async def _relay_share(paths: InboxPaths) -> None:
         ready_dir = writer.commit(staged)
         paths.log(f"[trace] share.committed batch={staged.batch_id} dir={ready_dir}")
 
-        from wechatbridge4py.win.events import signal
+        from wechatbridge4py.windows.events import signal
 
         signal()
         operation.report_completed()

@@ -9,7 +9,7 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="仅 Windows")
 
 
 def test_signal_wakes_waiter() -> None:
-    from wechatbridge4py.win.events import InboxEventWaiter, signal
+    from wechatbridge4py.windows.events import InboxEventWaiter, signal
 
     with InboxEventWaiter() as waiter:
         assert waiter.wait(50) is False  # 先确认超时路径
@@ -18,7 +18,7 @@ def test_signal_wakes_waiter() -> None:
 
 
 def test_waiter_usable_as_context_manager() -> None:
-    from wechatbridge4py.win.events import InboxEventWaiter
+    from wechatbridge4py.windows.events import InboxEventWaiter
 
     with InboxEventWaiter() as waiter:
         assert waiter.wait(10) is False

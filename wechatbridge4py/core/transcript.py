@@ -11,8 +11,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import datetime
+
+from wechatbridge4py.core.models import Message
 
 # 消息头：行首「·」+ 发送者，换行中文日期时间（时/月/日均可能不补零），再换行进入正文。
 HEADER_RE = re.compile(r"(?m)^·([^\r\n]+)\r?\n(\d{4}年\d{1,2}月\d{1,2}日 \d{1,2}:\d{2})\r?\n")
@@ -22,21 +23,6 @@ _DATETIME_FORMAT = "%Y年%m月%d日 %H:%M"
 
 class TranscriptError(ValueError):
     """转录文本无法按已知格式解析。"""
-
-
-@dataclass(frozen=True)
-class Message:
-    """一条聊天消息。
-
-    Attributes:
-        sender: 发送者昵称（已去除行首「·」与首尾空白）。
-        time: 消息时间。来自文本的本地时间，不带时区信息。
-        text: 消息正文，保留内部空行与附件引用行（如「[图片] xxx.jpg」）。
-    """
-
-    sender: str
-    time: datetime
-    text: str
 
 
 def parse_transcript(text: str) -> list[Message]:

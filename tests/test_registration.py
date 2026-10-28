@@ -1,19 +1,17 @@
-"""注册器纯函数部分验证：清单生成、PNG 编码、入口 exe 定位。"""
+"""注册器纯函数部分验证：清单生成、入口 exe 定位、开发者模式自动开启。"""
 from __future__ import annotations
 
-import struct
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 
 import pytest
 
-from wechatbridge4py.win.registration import (
+from wechatbridge4py.windows.registration import (
     DISPLAY_NAME,
     PACKAGE_NAME,
     RegistrationError,
     build_manifest,
     share_entry_exe,
-    write_png,
 )
 
 
@@ -38,6 +36,26 @@ def test_manifest_is_wellformed_and_carries_contract() -> None:
     assert "AllowExternalContent" not in xml_text
 
 
+def test_signed_sparse_manifest_carries_external_content_and_publisher() -> None:
+    """签名路线清单：外部位置声明 + 发布者与证书主题逐字一致 + 自定义显示名。"""
+    xml_text = build_manifest(
+        executable_rel="Scripts\\wcb4py-share.exe",
+        assets_rel="wcb4py-share\\Assets",
+        publisher="CN=WeChatBridge4Py Dev",
+        include_external_content=True,
+        display_name="我的转发助手",
+    )
+    root = ElementTree.fromstring(xml_text)
+    namespace = {"m": "http://schemas.microsoft.com/appx/manifest/foundation/windows10"}
+    uap10 = {"uap10": "http://schemas.microsoft.com/appx/manifest/uap/windows10/10"}
+    assert root.find(".//m:Identity", namespace).get("Publisher") == "CN=WeChatBridge4Py Dev"
+    assert root.find(".//uap10:AllowExternalContent", uap10) is not None
+    # 开发者的自定义显示名必须写进两处 DisplayName
+    assert root.find(".//m:Properties/m:DisplayName", namespace).text == "我的转发助手"
+    uap = {"uap": "http://schemas.microsoft.com/appx/manifest/uap/windows10"}
+    assert root.find(".//uap:VisualElements", uap).get("DisplayName") == "我的转发助手"
+
+
 def test_manifest_declares_run_full_trust() -> None:
     """布局目录里的 exe 是完整权限 Win32 进程，必须声明 runFullTrust。"""
     xml_text = build_manifest(executable_rel="wcb4py-share.exe", assets_rel="Assets")
@@ -48,34 +66,6 @@ def test_manifest_declares_run_full_trust() -> None:
         node.get("Name") for node in ElementTree.fromstring(xml_text).findall(".//rescap:Capability", rescap)
     ]
     assert "runFullTrust" in capabilities
-
-
-def test_signed_sparse_manifest_carries_external_content_and_publisher() -> None:
-    """签名路线清单：外部位置声明 + 发布者与证书主题逐字一致。"""
-    xml_text = build_manifest(
-        executable_rel="Scripts\\wcb4py-share.exe",
-        assets_rel="wcb4py-share\\Assets",
-        publisher="CN=WeChatBridge4Py Dev",
-        include_external_content=True,
-    )
-    root = ElementTree.fromstring(xml_text)
-    namespace = {"m": "http://schemas.microsoft.com/appx/manifest/foundation/windows10"}
-    uap10 = {"uap10": "http://schemas.microsoft.com/appx/manifest/uap/windows10/10"}
-    assert root.find(".//m:Identity", namespace).get("Publisher") == "CN=WeChatBridge4Py Dev"
-    assert root.find(".//uap10:AllowExternalContent", uap10) is not None
-    # 兜底路线（默认）则不带外部位置声明
-    fallback = build_manifest(executable_rel="wcb4py-share.exe", assets_rel="Assets")
-    assert "AllowExternalContent" not in fallback
-
-
-def test_write_png_emits_valid_png(tmp_path: Path) -> None:
-    target = tmp_path / "icon.png"
-    write_png(target, 44)
-    raw = target.read_bytes()
-    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
-    width, height = struct.unpack(">II", raw[16:24])
-    assert (width, height) == (44, 44)
-    assert raw.endswith(b"IEND\xaeB`\x82")
 
 
 def test_share_entry_exe_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,7 +80,7 @@ def test_share_entry_exe_env_override(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_ensure_dev_mode_noop_when_already_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """已开启时不做任何动作（不写脚本、不弹提权）。"""
-    from wechatbridge4py.win import registration as reg
+    from wechatbridge4py.windows import registration as reg
 
     monkeypatch.setattr(reg, "dev_mode_enabled", lambda: True)
     monkeypatch.setattr(
@@ -103,7 +93,7 @@ def test_ensure_dev_mode_elevates_and_succeeds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """未开启时写出提权脚本并执行；执行成功（复查通过）即返回 True。"""
-    from wechatbridge4py.win import registration as reg
+    from wechatbridge4py.windows import registration as reg
 
     state = {"enabled": False}
     monkeypatch.setattr(reg, "dev_mode_enabled", lambda: state["enabled"])
@@ -122,7 +112,7 @@ def test_ensure_dev_mode_elevates_and_succeeds(
 
 def test_ensure_dev_mode_respects_no_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
     """allow_elevation=False 时只查询不动作。"""
-    from wechatbridge4py.win import registration as reg
+    from wechatbridge4py.windows import registration as reg
 
     monkeypatch.setattr(reg, "dev_mode_enabled", lambda: False)
     monkeypatch.setattr(
@@ -135,7 +125,7 @@ def test_ensure_dev_mode_fails_cleanly_when_uac_declined(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """UAC 被拒（执行后仍未开启）时安静返回 False，由调用方给手动指引。"""
-    from wechatbridge4py.win import registration as reg
+    from wechatbridge4py.windows import registration as reg
 
     monkeypatch.setattr(reg, "dev_mode_enabled", lambda: False)
     monkeypatch.setattr(reg, "layout_dir", lambda: tmp_path)

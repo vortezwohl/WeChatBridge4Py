@@ -1,14 +1,14 @@
 [project]
 name = "wechatbridge4py"
-version = "0.1.0"
-description = "微信「合并转发」→ Python 回调：Share Target 收件箱桥接基础设施（不预设任何目标应用）"
+version = "0.2.0"
+description = "微信「合并转发」→ Python 回调：自定义品牌的 Share Target 收件箱 SDK（纯 SDK，无 CLI）"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
     { name = "WeChatBridge4Py contributors" },
 ]
-keywords = ["wechat", "share-target", "msix", "chat-export", "bridge"]
+keywords = ["wechat", "share-target", "msix", "chat-export", "sdk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -29,11 +29,9 @@ dependencies = [
     "winrt-windows-storage>=4!10.0.28000.2705 ; sys_platform == 'win32'",
 ]
 
-[project.scripts]
-wcb4py = "wechatbridge4py.cli:main"
-
+# SDK-only：唯一的入口点是系统分享契约激活的二进制（非用户 CLI）。
 [project.gui-scripts]
-wcb4py-share = "wechatbridge4py.win.activation:main"
+wcb4py-share = "wechatbridge4py.windows.activation:main"
 
 [dependency-groups]
 dev = [

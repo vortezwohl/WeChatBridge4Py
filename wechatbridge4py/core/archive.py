@@ -12,10 +12,10 @@
 from __future__ import annotations
 
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
 
-from wechatbridge4py.core.transcript import Message, TranscriptError, parse_transcript
+from wechatbridge4py.core.models import Message, Transcript
+from wechatbridge4py.core.transcript import TranscriptError, parse_transcript
 
 # 与上游一致的防御上限。
 MAX_ENTRIES = 1000
@@ -27,21 +27,6 @@ _TRANSCRIPT_NAME = "聊天记录.txt"
 
 class ArchiveError(ValueError):
     """归档不合规或无法解析。消息面向开发者，可直接展示。"""
-
-
-@dataclass(frozen=True)
-class Transcript:
-    """一个归档的解析结果。
-
-    Attributes:
-        zip_path: 归档在收件箱内的绝对路径（开发者可自行继续解包媒体）。
-        messages: 解析出的消息列表（按归档内顺序）。
-        attachment_names: TXT 之外的全部条目名（含 images/、videos/ 前缀）。
-    """
-
-    zip_path: Path
-    messages: list[Message]
-    attachment_names: list[str]
 
 
 def read_archive(zip_path: str | Path) -> Transcript:
