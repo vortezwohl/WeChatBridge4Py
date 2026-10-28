@@ -99,7 +99,8 @@ reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock /v AllowDe
    Windows 10 用户请升级系统或关注上游方案。
 2. 注册有两条路线（自动选择）：**签名稀疏包**（首选，需 Windows SDK 的
    signtool/makeappx/makepri；自建自签证书并提权导入本机信任，首次会弹 UAC）；
-   **开发者模式直注**（兜底，需开启开发者模式，入口 exe 复制进
+   **开发者模式直注**（兜底，需开启开发者模式——未开启时 register 会弹 UAC
+   自动开启，`--no-dev-mode` 可禁用自动开启；入口 exe 复制进
    `<venv>/wcb4py-share/`，升级本包后需重跑 `wcb4py register`）。
 3. 分享入口显示名刻意为「聊天转发桥」：微信会隐藏显示名含连续
    微信/WeChat/Weixin 子串的目标（上游项目实测结论，勿改）。

@@ -352,8 +352,12 @@ def _signature_status(msix_path: Path) -> str:
 # 打包与注册
 # ---------------------------------------------------------------------------
 
-def register() -> str:
+def register(*, allow_dev_mode_elevation: bool = True) -> str:
     """注册分享入口（幂等：已注册则先注销再注册）。
+
+    Args:
+        allow_dev_mode_elevation: 进入兜底直注路线前，若开发者模式未开启，
+            是否允许弹 UAC 自动开启（False 时直接给出手动指引并失败）。
 
     Returns:
         成功路线名："signed-sparse"（签名稀疏包，首选）或
@@ -376,6 +380,8 @@ def register() -> str:
             return _register_signed(target, tools)
         except RegistrationError as error:
             print(f"[签名路线失败，回退开发者模式直注] {error}")
+    if not ensure_dev_mode(allow_elevation=allow_dev_mode_elevation):
+        raise RegistrationError(_DEV_MODE_MANUAL)
     return _register_layout(exe, target)
 
 
@@ -557,6 +563,54 @@ def dev_mode_enabled() -> bool:
         return False
 
 
+# 开发者模式的手动开启指引；register 自动开启失败/被拒时兜底展示。
+_DEV_MODE_MANUAL = (
+    "开发者模式未开启，且自动开启被拒绝或未执行。请以管理员身份运行：\n"
+    "  reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock"
+    " /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f\n"
+    "或「设置 → 系统和安全性 → 开发者选项」打开开发人员模式后重试。"
+)
+
+
+def ensure_dev_mode(allow_elevation: bool = True) -> bool:
+    """确保开发者模式开启；未开启时经 UAC 提权自动写入文档化的注册表开关。
+
+    开关即系统设置「开发人员模式」背后的 AppModelUnlock\\
+    AllowDevelopmentWithoutDevLicense，立即生效无需重启。HKLM 写入必须
+    提权，用户在 UAC 弹窗点一次「是」是下限，无法也不应完全静默。
+
+    Args:
+        allow_elevation: 是否允许弹 UAC 自动开启；False 时只查询不动作。
+
+    Returns:
+        开发者模式当前是否处于开启状态。
+    """
+    if dev_mode_enabled():
+        return True
+    if not allow_elevation:
+        return False
+    script = layout_dir() / "enable-devmode.ps1"
+    script.write_text(
+        'reg add "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock"'
+        " /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f | Out-Null\n"
+        '$value = (Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows'
+        '\\CurrentVersion\\AppModelUnlock" -ErrorAction SilentlyContinue)'
+        ".AllowDevelopmentWithoutDevLicense\n"
+        "if ($value -eq 1) { exit 0 } else { exit 1 }\n",
+        encoding="ascii",
+    )
+    print("开发者模式未开启：正在请求管理员权限自动开启（UAC 弹窗请点「是」）…")
+    code, output = _run_powershell([
+        "Start-Process", "-Verb", "RunAs", "-Wait", "-FilePath", "powershell",
+        "-ArgumentList", f"'-NoProfile -ExecutionPolicy Bypass -File {script}'",
+    ])
+    if dev_mode_enabled():
+        print("开发者模式已开启。")
+        return True
+    print(f"自动开启失败（exit={code} {output.strip()[:200]}）。")
+    return False
+
+
 def doctor() -> list[str]:
     """环境体检，返回逐条检查结果文本（同时直接打印交给 CLI 使用）。"""
     if os.name != "nt":
@@ -585,7 +639,8 @@ def doctor() -> list[str]:
     lines.append(
         "[OK] 开发者模式：已开启（直注兜底路线的前提）"
         if dev_mode_enabled()
-        else "[未开启] 开发者模式未开启（签名路线不受影响；直注兜底需开启）"
+        else "[未开启] 开发者模式未开启：register 在需要兜底路线时会请求提权自动开启"
+             "（--no-dev-mode 可禁用，届时按手动指引处理）"
     )
     from wechatbridge4py.core.inbox import InboxPaths
 
@@ -677,13 +732,8 @@ def _run_powershell(arguments: list[str], timeout: float = 120.0) -> tuple[int, 
 
 
 def _dev_mode_hint(error_text: str) -> str:
-    """从注册输出里识别开发者模式问题并给出开启指引。"""
+    """从注册输出里识别开发者模式问题，追加手动开启指引。"""
     markers = ("0x80073CFF", "开发人员模式", "developer mode", "Developer Mode")
     if any(marker.lower() in error_text.lower() for marker in markers):
-        return (
-            "\n提示：注册被拒通常是因为开发者模式未开启。请以管理员身份运行：\n"
-            "  reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock"
-            " /v AllowDevelopmentWithoutDevLicense /t REG_DWORD /d 1 /f\n"
-            "或「设置 → 隐和安全性 → 开发者选项」打开开发人员模式后重试。"
-        )
+        return "\n提示：" + _DEV_MODE_MANUAL
     return ""

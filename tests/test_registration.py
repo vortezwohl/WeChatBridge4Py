@@ -86,3 +86,58 @@ def test_share_entry_exe_env_override(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("WCB4PY_SHARE_EXE", str(tmp_path / "missing.exe"))
     with pytest.raises(RegistrationError, match="WCB4PY_SHARE_EXE"):
         share_entry_exe()
+
+
+def test_ensure_dev_mode_noop_when_already_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """已开启时不做任何动作（不写脚本、不弹提权）。"""
+    from wechatbridge4py.win import registration as reg
+
+    monkeypatch.setattr(reg, "dev_mode_enabled", lambda: True)
+    monkeypatch.setattr(
+        reg, "_run_powershell", lambda *a, **k: pytest.fail("不应触发提权")
+    )
+    assert reg.ensure_dev_mode() is True
+
+
+def test_ensure_dev_mode_elevates_and_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """未开启时写出提权脚本并执行；执行成功（复查通过）即返回 True。"""
+    from wechatbridge4py.win import registration as reg
+
+    state = {"enabled": False}
+    monkeypatch.setattr(reg, "dev_mode_enabled", lambda: state["enabled"])
+    monkeypatch.setattr(reg, "layout_dir", lambda: tmp_path)
+
+    def fake_run(arguments, timeout=120.0):
+        state["enabled"] = True  # 模拟提权脚本写入成功后的复查结果
+        return 0, ""
+
+    monkeypatch.setattr(reg, "_run_powershell", fake_run)
+    assert reg.ensure_dev_mode() is True
+    script = tmp_path / "enable-devmode.ps1"
+    assert script.exists()
+    assert "AllowDevelopmentWithoutDevLicense" in script.read_text(encoding="ascii")
+
+
+def test_ensure_dev_mode_respects_no_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """allow_elevation=False 时只查询不动作。"""
+    from wechatbridge4py.win import registration as reg
+
+    monkeypatch.setattr(reg, "dev_mode_enabled", lambda: False)
+    monkeypatch.setattr(
+        reg, "_run_powershell", lambda *a, **k: pytest.fail("不应触发提权")
+    )
+    assert reg.ensure_dev_mode(allow_elevation=False) is False
+
+
+def test_ensure_dev_mode_fails_cleanly_when_uac_declined(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """UAC 被拒（执行后仍未开启）时安静返回 False，由调用方给手动指引。"""
+    from wechatbridge4py.win import registration as reg
+
+    monkeypatch.setattr(reg, "dev_mode_enabled", lambda: False)
+    monkeypatch.setattr(reg, "layout_dir", lambda: tmp_path)
+    monkeypatch.setattr(reg, "_run_powershell", lambda a, timeout=120.0: (1, "已取消"))
+    assert reg.ensure_dev_mode() is False

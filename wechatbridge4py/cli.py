@@ -24,7 +24,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"wcb4py {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("register", help="注册 Windows 分享入口（需开发者模式）")
+    register_parser = subparsers.add_parser(
+        "register",
+        help="注册 Windows 分享入口（首选签名路线；兜底路线会自动请求提权开启开发者模式）",
+    )
+    register_parser.add_argument(
+        "--no-dev-mode",
+        action="store_true",
+        help="禁止 register 自动开启 Windows 开发者模式（需要兜底路线时将给出手动指引）",
+    )
     subparsers.add_parser("unregister", help="注销分享入口")
     subparsers.add_parser("doctor", help="环境体检：入口 exe、注册状态、开发者模式、收件箱")
 
@@ -42,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "register":
         from wechatbridge4py.win.registration import register
 
-        strategy = register()
+        strategy = register(allow_dev_mode_elevation=not args.no_dev_mode)
         print(f"注册成功（策略：{strategy}）。现在可在微信「转发到其他应用」里选择「聊天转发桥」。")
         if strategy == "layout-copy":
             print("注意：当前使用布局目录策略，重新安装/升级本包后需再次执行 wcb4py register。")
